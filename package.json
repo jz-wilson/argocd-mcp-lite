@@ -4,7 +4,7 @@
   "description": "Token-efficient ArgoCD MCP server for AI agents",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/argoproj-labs/mcp-for-argocd.git"
+    "url": "https://github.com/jz-wilson/argocd-mcp-lite"
   },
   "keywords": [
     "mcp",

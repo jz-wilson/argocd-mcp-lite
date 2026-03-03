@@ -1,7 +1,7 @@
 {
-  "name": "argocd-mcp",
-  "version": "0.0.0",
-  "description": "Argo CD MCP Server",
+  "name": "argocd-mcp-lite",
+  "version": "0.1.0",
+  "description": "Token-efficient ArgoCD MCP server for AI agents",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/argoproj-labs/mcp-for-argocd.git"

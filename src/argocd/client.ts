@@ -65,13 +65,58 @@ export class ArgoCDClient {
     };
   }
 
-  public async getApplication(applicationName: string, appNamespace?: string) {
+  public async getApplication(applicationName: string, appNamespace?: string, compact: boolean = true) {
     const queryParams = appNamespace ? { appNamespace } : undefined;
     const { body } = await this.client.get<V1alpha1Application>(
       `/api/v1/applications/${applicationName}`,
       queryParams
     );
-    return body;
+    if (!compact) return body;
+
+    return {
+      metadata: {
+        name: body.metadata?.name,
+        namespace: body.metadata?.namespace,
+        labels: body.metadata?.labels,
+        creationTimestamp: body.metadata?.creationTimestamp,
+        annotations: body.metadata?.annotations
+          ? Object.fromEntries(
+              Object.entries(body.metadata.annotations).filter(([k]) =>
+                k.startsWith('argocd.argoproj.io/')
+              )
+            )
+          : undefined,
+      },
+      spec: {
+        project: body.spec?.project,
+        source: body.spec?.source
+          ? {
+              repoURL: body.spec.source.repoURL,
+              path: body.spec.source.path,
+              chart: body.spec.source.chart,
+            }
+          : undefined,
+        sources: body.spec?.sources?.map((s) => ({
+          repoURL: s.repoURL,
+          path: s.path,
+          chart: s.chart,
+        })),
+        destination: body.spec?.destination,
+        syncPolicy: body.spec?.syncPolicy,
+      },
+      status: {
+        sync: body.status?.sync,
+        health: body.status?.health,
+        summary: body.status?.summary,
+        operationState: body.status?.operationState
+          ? {
+              phase: body.status.operationState.phase,
+              message: body.status.operationState.message,
+            }
+          : undefined,
+        conditions: body.status?.conditions?.slice(-3),
+      },
+    };
   }
 
   public async createApplication(application: V1alpha1Application) {
@@ -155,11 +200,48 @@ export class ArgoCDClient {
     return body;
   }
 
-  public async getApplicationResourceTree(applicationName: string) {
+  public async getApplicationResourceTree(
+    applicationName: string,
+    options?: {
+      kind?: string;
+      health?: string;
+      namespace?: string;
+      compact?: boolean;
+    }
+  ) {
     const { body } = await this.client.get<V1alpha1ApplicationTree>(
       `/api/v1/applications/${applicationName}/resource-tree`
     );
-    return body;
+
+    const compact = options?.compact ?? true;
+    let nodes = body.nodes || [];
+
+    if (options?.kind) {
+      nodes = nodes.filter((n) => n.kind === options.kind);
+    }
+    if (options?.health) {
+      nodes = nodes.filter((n) => n.health?.status === options.health);
+    }
+    if (options?.namespace) {
+      nodes = nodes.filter((n) => n.namespace === options.namespace);
+    }
+
+    if (compact) {
+      return {
+        ...body,
+        nodes: nodes.map((n) => ({
+          group: n.group,
+          kind: n.kind,
+          name: n.name,
+          namespace: n.namespace,
+          health: n.health,
+          status: n.status,
+          parentRefs: n.parentRefs,
+        })),
+      };
+    }
+
+    return { ...body, nodes };
   }
 
   public async getApplicationManagedResources(
@@ -198,7 +280,8 @@ export class ArgoCDClient {
     applicationName: string,
     applicationNamespace: string,
     resourceRef: V1alpha1ResourceResult,
-    container: string
+    container: string,
+    options?: { tailLines?: number; sinceSeconds?: number }
   ) {
     const logs: ApplicationLogEntry[] = [];
     await this.client.getStream<ApplicationLogEntry>(
@@ -211,8 +294,9 @@ export class ArgoCDClient {
         kind: resourceRef.kind,
         version: resourceRef.version,
         follow: false,
-        tailLines: 100,
-        container: container
+        tailLines: options?.tailLines ?? 50,
+        container: container,
+        ...(options?.sinceSeconds && { sinceSeconds: options.sinceSeconds })
       },
       (chunk) => logs.push(chunk)
     );
@@ -232,11 +316,40 @@ export class ArgoCDClient {
     return logs;
   }
 
-  public async getApplicationEvents(applicationName: string) {
+  private filterEvents(
+    events: V1EventList,
+    options?: { limit?: number; sinceMinutes?: number }
+  ): V1EventList {
+    const limit = options?.limit ?? 20;
+    let items = events.items || [];
+
+    if (options?.sinceMinutes) {
+      const cutoff = new Date(Date.now() - options.sinceMinutes * 60 * 1000);
+      items = items.filter((e) => {
+        const ts = e.lastTimestamp || e.eventTime;
+        return ts ? new Date(ts as string) >= cutoff : true;
+      });
+    }
+
+    items.sort((a, b) => {
+      const tsA = new Date((a.lastTimestamp || a.eventTime || 0) as string).getTime();
+      const tsB = new Date((b.lastTimestamp || b.eventTime || 0) as string).getTime();
+      return tsB - tsA;
+    });
+
+    items = items.slice(0, limit);
+
+    return { ...events, items };
+  }
+
+  public async getApplicationEvents(
+    applicationName: string,
+    options?: { limit?: number; sinceMinutes?: number }
+  ) {
     const { body } = await this.client.get<V1EventList>(
       `/api/v1/applications/${applicationName}/events`
     );
-    return body;
+    return this.filterEvents(body, options);
   }
 
   public async getResource(
@@ -263,7 +376,8 @@ export class ArgoCDClient {
     applicationNamespace: string,
     resourceUID: string,
     resourceNamespace: string,
-    resourceName: string
+    resourceName: string,
+    options?: { limit?: number; sinceMinutes?: number }
   ) {
     const { body } = await this.client.get<V1EventList>(
       `/api/v1/applications/${applicationName}/events`,
@@ -274,7 +388,7 @@ export class ArgoCDClient {
         resourceName
       }
     );
-    return body;
+    return this.filterEvents(body, options);
   }
 
   public async getResourceActions(

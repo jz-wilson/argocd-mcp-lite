@@ -143,3 +143,4 @@ dist
 
 # claude code
 CLAUDE.md
+.env

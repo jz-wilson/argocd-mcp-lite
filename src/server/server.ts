@@ -67,20 +67,52 @@ export class Server extends McpServer {
     );
     this.addJsonOutputTool(
       'get_application',
-      'get_application returns application by application name. Optionally specify the application namespace to get applications from non-default namespaces.',
+      'get_application returns application by application name. Uses compact mode by default to reduce token usage — set compact=false for the full unfiltered response.',
       {
         applicationName: z.string(),
-        applicationNamespace: ApplicationNamespaceSchema.optional()
+        applicationNamespace: ApplicationNamespaceSchema.optional(),
+        compact: z
+          .boolean()
+          .optional()
+          .default(true)
+          .describe(
+            'When true (default), strips heavy fields like managedFields, full operation history, and verbose annotations to reduce token usage. Set to false for the full unfiltered response.'
+          )
       },
-      async ({ applicationName, applicationNamespace }) =>
-        await this.argocdClient.getApplication(applicationName, applicationNamespace)
+      async ({ applicationName, applicationNamespace, compact }) =>
+        await this.argocdClient.getApplication(applicationName, applicationNamespace, compact)
     );
     this.addJsonOutputTool(
       'get_application_resource_tree',
-      'get_application_resource_tree returns resource tree for application by application name',
-      { applicationName: z.string() },
-      async ({ applicationName }) =>
-        await this.argocdClient.getApplicationResourceTree(applicationName)
+      'get_application_resource_tree returns resource tree for application. Supports filtering by kind, health status, and namespace. Uses compact mode by default to reduce token usage.',
+      {
+        applicationName: z.string(),
+        kind: z
+          .string()
+          .optional()
+          .describe(
+            'Filter nodes by Kubernetes resource kind (e.g., "Deployment", "Service", "Pod")'
+          ),
+        health: z
+          .enum(['Healthy', 'Degraded', 'Progressing', 'Missing', 'Unknown', 'Suspended'])
+          .optional()
+          .describe('Filter nodes by health status'),
+        namespace: z.string().optional().describe('Filter nodes by namespace'),
+        compact: z
+          .boolean()
+          .optional()
+          .default(true)
+          .describe(
+            'When true (default), strips networkingInfo and images from nodes. Set to false for full node details.'
+          )
+      },
+      async ({ applicationName, kind, health, namespace, compact }) =>
+        await this.argocdClient.getApplicationResourceTree(applicationName, {
+          kind,
+          health,
+          namespace,
+          compact
+        })
     );
     this.addJsonOutputTool(
       'get_application_managed_resources',
@@ -123,71 +155,111 @@ export class Server extends McpServer {
         applicationName: z.string(),
         applicationNamespace: ApplicationNamespaceSchema,
         resourceRef: ResourceRefSchema,
-        container: z.string()
+        container: z.string(),
+        tailLines: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .default(50)
+          .describe('Number of log lines to return from the end (default: 50)'),
+        sinceSeconds: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Only return logs from the last N seconds')
       },
-      async ({ applicationName, applicationNamespace, resourceRef, container }) =>
+      async ({ applicationName, applicationNamespace, resourceRef, container, tailLines, sinceSeconds }) =>
         await this.argocdClient.getWorkloadLogs(
           applicationName,
           applicationNamespace,
           resourceRef as V1alpha1ResourceResult,
-          container
+          container,
+          { tailLines, sinceSeconds }
         )
     );
     this.addJsonOutputTool(
       'get_application_events',
-      'get_application_events returns events for application by application name',
-      { applicationName: z.string() },
-      async ({ applicationName }) => await this.argocdClient.getApplicationEvents(applicationName)
+      'get_application_events returns events for application, sorted by most recent first. Returns last 20 events by default.',
+      {
+        applicationName: z.string(),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .default(20)
+          .describe('Maximum number of events to return (default: 20)'),
+        sinceMinutes: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Only return events from the last N minutes')
+      },
+      async ({ applicationName, limit, sinceMinutes }) =>
+        await this.argocdClient.getApplicationEvents(applicationName, { limit, sinceMinutes })
     );
     this.addJsonOutputTool(
       'get_resource_events',
-      'get_resource_events returns events for a resource that is managed by an application',
+      'get_resource_events returns events for a resource managed by an application, sorted by most recent first. Returns last 20 events by default.',
       {
         applicationName: z.string(),
         applicationNamespace: ApplicationNamespaceSchema,
         resourceUID: z.string(),
         resourceNamespace: z.string(),
-        resourceName: z.string()
+        resourceName: z.string(),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .default(20)
+          .describe('Maximum number of events to return (default: 20)'),
+        sinceMinutes: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Only return events from the last N minutes')
       },
       async ({
         applicationName,
         applicationNamespace,
         resourceUID,
         resourceNamespace,
-        resourceName
+        resourceName,
+        limit,
+        sinceMinutes
       }) =>
         await this.argocdClient.getResourceEvents(
           applicationName,
           applicationNamespace,
           resourceUID,
           resourceNamespace,
-          resourceName
+          resourceName,
+          { limit, sinceMinutes }
         )
     );
     this.addJsonOutputTool(
       'get_resources',
-      'get_resources return manifests for resources specified by resourceRefs. If resourceRefs is empty or not provided, fetches all resources managed by the application.',
+      'get_resources returns manifests for resources specified by resourceRefs. You must specify resourceRefs explicitly — use get_application_resource_tree first to discover resource references.',
       {
         applicationName: z.string(),
         applicationNamespace: ApplicationNamespaceSchema,
-        resourceRefs: ResourceRefSchema.array().optional()
+        resourceRefs: ResourceRefSchema.array().describe(
+          'Array of resource references to fetch. Required — use get_application_resource_tree to discover refs first.'
+        )
       },
       async ({ applicationName, applicationNamespace, resourceRefs }) => {
-        let refs = resourceRefs || [];
-        if (refs.length === 0) {
-          const tree = await this.argocdClient.getApplicationResourceTree(applicationName);
-          refs =
-            tree.nodes?.map((node) => ({
-              uid: node.uid!,
-              version: node.version!,
-              group: node.group!,
-              kind: node.kind!,
-              name: node.name!,
-              namespace: node.namespace!
-            })) || [];
+        if (!resourceRefs || resourceRefs.length === 0) {
+          throw new Error(
+            'resourceRefs is required and must not be empty. Use get_application_resource_tree first to discover resource references, then pass specific refs here.'
+          );
         }
         return Promise.all(
-          refs.map((ref) =>
+          resourceRefs.map((ref) =>
             this.argocdClient.getResource(applicationName, applicationNamespace, ref)
           )
         );

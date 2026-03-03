@@ -170,7 +170,14 @@ export class Server extends McpServer {
           .optional()
           .describe('Only return logs from the last N seconds')
       },
-      async ({ applicationName, applicationNamespace, resourceRef, container, tailLines, sinceSeconds }) =>
+      async ({
+        applicationName,
+        applicationNamespace,
+        resourceRef,
+        container,
+        tailLines,
+        sinceSeconds
+      }) =>
         await this.argocdClient.getWorkloadLogs(
           applicationName,
           applicationNamespace,

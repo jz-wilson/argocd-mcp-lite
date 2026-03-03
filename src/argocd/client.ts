@@ -65,7 +65,11 @@ export class ArgoCDClient {
     };
   }
 
-  public async getApplication(applicationName: string, appNamespace?: string, compact: boolean = true) {
+  public async getApplication(
+    applicationName: string,
+    appNamespace?: string,
+    compact: boolean = true
+  ) {
     const queryParams = appNamespace ? { appNamespace } : undefined;
     const { body } = await this.client.get<V1alpha1Application>(
       `/api/v1/applications/${applicationName}`,
@@ -85,7 +89,7 @@ export class ArgoCDClient {
                 k.startsWith('argocd.argoproj.io/')
               )
             )
-          : undefined,
+          : undefined
       },
       spec: {
         project: body.spec?.project,
@@ -93,16 +97,16 @@ export class ArgoCDClient {
           ? {
               repoURL: body.spec.source.repoURL,
               path: body.spec.source.path,
-              chart: body.spec.source.chart,
+              chart: body.spec.source.chart
             }
           : undefined,
         sources: body.spec?.sources?.map((s) => ({
           repoURL: s.repoURL,
           path: s.path,
-          chart: s.chart,
+          chart: s.chart
         })),
         destination: body.spec?.destination,
-        syncPolicy: body.spec?.syncPolicy,
+        syncPolicy: body.spec?.syncPolicy
       },
       status: {
         sync: body.status?.sync,
@@ -111,11 +115,11 @@ export class ArgoCDClient {
         operationState: body.status?.operationState
           ? {
               phase: body.status.operationState.phase,
-              message: body.status.operationState.message,
+              message: body.status.operationState.message
             }
           : undefined,
-        conditions: body.status?.conditions?.slice(-3),
-      },
+        conditions: body.status?.conditions?.slice(-3)
+      }
     };
   }
 
@@ -236,8 +240,8 @@ export class ArgoCDClient {
           namespace: n.namespace,
           health: n.health,
           status: n.status,
-          parentRefs: n.parentRefs,
-        })),
+          parentRefs: n.parentRefs
+        }))
       };
     }
 

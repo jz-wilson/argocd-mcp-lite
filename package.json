@@ -42,17 +42,20 @@
     "lint:fix": "eslint src/**/*.ts --fix",
     "build": "tsup",
     "build:watch": "tsup --watch",
-    "generate-types": "dtsgen -c dtsgen.json -o src/types/argocd.d.ts swagger.json"
+    "generate-types": "dtsgen -c dtsgen.json -o src/types/argocd.d.ts swagger.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "author": "Argo Proj Contributors.",
   "license": "Apache-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.10.1",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "pino": "^9.6.0",
     "yargs": "^17.7.2",
-    "zod": "^3.24.3"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@dtsgenerator/replace-namespace": "^1.7.0",
@@ -68,6 +71,11 @@
     "tsup": "^8.4.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.30.1"
-  }
+    "typescript-eslint": "^8.30.1",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "homepage": "https://github.com/jz-wilson/argocd-mcp-lite"
 }

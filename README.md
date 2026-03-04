@@ -1,5 +1,6 @@
 # argocd-mcp-lite
 
+[![CI](https://github.com/jz-wilson/argocd-mcp-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/jz-wilson/argocd-mcp-lite/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/argocd-mcp-lite)](https://www.npmjs.com/package/argocd-mcp-lite)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)

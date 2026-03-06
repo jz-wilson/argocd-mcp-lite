@@ -21,15 +21,15 @@ export const ResourceRefSchema = z.object({
 
 export const ApplicationSchema = z.object({
   metadata: z.object({
-    name: z.string(),
+    name: z.string().min(1),
     namespace: ApplicationNamespaceSchema
   }),
   spec: z.object({
-    project: z.string(),
+    project: z.string().min(1),
     source: z.object({
-      repoURL: z.string(),
-      path: z.string(),
-      targetRevision: z.string()
+      repoURL: z.string().url(),
+      path: z.string().min(1),
+      targetRevision: z.string().min(1)
     }),
     syncPolicy: z.object({
       syncOptions: z.array(z.string()),

@@ -10,6 +10,7 @@ import {
   V1alpha1ApplicationResourceResult
 } from '../types/argocd-types.js';
 import { HttpClient } from './http.js';
+import { logger } from '../logging/logging.js';
 
 export class ArgoCDClient {
   private baseUrl: string;
@@ -20,6 +21,20 @@ export class ArgoCDClient {
     this.baseUrl = baseUrl;
     this.apiToken = apiToken;
     this.client = new HttpClient(this.baseUrl, this.apiToken);
+  }
+
+  public async checkConnection(): Promise<boolean> {
+    try {
+      await this.client.get('/api/version');
+      logger.info('ArgoCD connection verified successfully');
+      return true;
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'ArgoCD connection check failed — the server will start but API calls may fail'
+      );
+      return false;
+    }
   }
 
   public async listApplications(params?: { search?: string; limit?: number; offset?: number }) {
@@ -258,13 +273,27 @@ export class ArgoCDClient {
       kind?: string;
       appNamespace?: string;
       project?: string;
-    }
+    },
+    compact: boolean = true
   ) {
     const { body } = await this.client.get<{ items: V1alpha1ResourceDiff[] }>(
       `/api/v1/applications/${applicationName}/managed-resources`,
       filters
     );
-    return body;
+
+    if (!compact) return body;
+
+    return {
+      items: (body.items ?? []).map((item) => ({
+        group: item.group,
+        kind: item.kind,
+        namespace: item.namespace,
+        name: item.name,
+        hook: item.hook,
+        modified: item.modified,
+        resourceVersion: item.resourceVersion
+      }))
+    };
   }
 
   public async getApplicationLogs(applicationName: string) {

@@ -7,11 +7,27 @@ import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // check every 5 minutes
+
 export const connectStdioTransport = () => {
-  const server = createServer({
-    argocdBaseUrl: process.env.ARGOCD_BASE_URL || '',
-    argocdApiToken: process.env.ARGOCD_API_TOKEN || ''
-  });
+  const argocdBaseUrl = process.env.ARGOCD_BASE_URL || '';
+  const argocdApiToken = process.env.ARGOCD_API_TOKEN || '';
+
+  if (!argocdBaseUrl) {
+    logger.error('ARGOCD_BASE_URL environment variable is required but not set.');
+    process.exit(1);
+  }
+  if (!argocdApiToken) {
+    logger.error('ARGOCD_API_TOKEN environment variable is required but not set.');
+    process.exit(1);
+  }
+  if (!argocdBaseUrl.startsWith('http://') && !argocdBaseUrl.startsWith('https://')) {
+    logger.error(`ARGOCD_BASE_URL must start with http:// or https://, got: "${argocdBaseUrl}"`);
+    process.exit(1);
+  }
+
+  const server = createServer({ argocdBaseUrl, argocdApiToken });
 
   logger.info('Connecting to stdio transport');
   server.connect(new StdioServerTransport());
@@ -20,6 +36,10 @@ export const connectStdioTransport = () => {
 export const connectSSETransport = (port: number) => {
   const app = express();
   const transports: { [sessionId: string]: SSEServerTransport } = {};
+
+  app.get('/healthz', (_req, res) => {
+    res.status(200).json({ status: 'ok' });
+  });
 
   app.get('/sse', async (req, res) => {
     const server = createServer({
@@ -49,18 +69,40 @@ export const connectSSETransport = (port: number) => {
   app.listen(port);
 };
 
+interface SessionEntry {
+  transport: StreamableHTTPServerTransport;
+  lastActivity: number;
+}
+
 export const connectHttpTransport = (port: number) => {
   const app = express();
   app.use(express.json());
 
-  const httpTransports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+  const httpSessions: { [sessionId: string]: SessionEntry } = {};
+
+  // Periodic cleanup of expired sessions
+  setInterval(() => {
+    const now = Date.now();
+    for (const [sessionId, entry] of Object.entries(httpSessions)) {
+      if (now - entry.lastActivity > SESSION_TTL_MS) {
+        logger.info({ sessionId }, 'expiring idle session');
+        entry.transport.close?.();
+        delete httpSessions[sessionId];
+      }
+    }
+  }, SESSION_CLEANUP_INTERVAL_MS).unref();
+
+  app.get('/healthz', (_req, res) => {
+    res.status(200).json({ status: 'ok' });
+  });
 
   app.post('/mcp', async (req, res) => {
     const sessionIdFromHeader = req.headers['mcp-session-id'] as string | undefined;
     let transport: StreamableHTTPServerTransport;
 
-    if (sessionIdFromHeader && httpTransports[sessionIdFromHeader]) {
-      transport = httpTransports[sessionIdFromHeader];
+    if (sessionIdFromHeader && httpSessions[sessionIdFromHeader]) {
+      httpSessions[sessionIdFromHeader].lastActivity = Date.now();
+      transport = httpSessions[sessionIdFromHeader].transport;
     } else if (!sessionIdFromHeader && isInitializeRequest(req.body)) {
       const argocdBaseUrl =
         (req.headers['x-argocd-base-url'] as string) || process.env.ARGOCD_BASE_URL || '';
@@ -77,13 +119,13 @@ export const connectHttpTransport = (port: number) => {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (newSessionId) => {
-          httpTransports[newSessionId] = transport;
+          httpSessions[newSessionId] = { transport, lastActivity: Date.now() };
         }
       });
 
       transport.onclose = () => {
         if (transport.sessionId) {
-          delete httpTransports[transport.sessionId];
+          delete httpSessions[transport.sessionId];
         }
       };
 
@@ -113,11 +155,12 @@ export const connectHttpTransport = (port: number) => {
 
   const handleSessionRequest = async (req: express.Request, res: express.Response) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (!sessionId || !httpTransports[sessionId]) {
+    if (!sessionId || !httpSessions[sessionId]) {
       res.status(400).send('Invalid or missing session ID');
       return;
     }
-    const transport = httpTransports[sessionId];
+    httpSessions[sessionId].lastActivity = Date.now();
+    const transport = httpSessions[sessionId].transport;
     await transport.handleRequest(req, res);
   };
 

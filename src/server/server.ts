@@ -2,6 +2,7 @@ import { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js
 
 import packageJSON from '../../package.json' with { type: 'json' };
 import { ArgoCDClient } from '../argocd/client.js';
+import { logger } from '../logging/logging.js';
 import { z, ZodRawShape } from 'zod';
 import { V1alpha1Application, V1alpha1ResourceResult } from '../types/argocd-types.js';
 import {
@@ -24,6 +25,9 @@ export class Server extends McpServer {
       version: packageJSON.version
     });
     this.argocdClient = new ArgoCDClient(serverInfo.argocdBaseUrl, serverInfo.argocdApiToken);
+
+    // Fire-and-forget connection check (non-blocking, warns on failure)
+    this.argocdClient.checkConnection();
 
     const isReadOnly =
       String(process.env.MCP_READ_ONLY ?? '')
@@ -130,9 +134,26 @@ export class Server extends McpServer {
         version: z.string().optional().describe('Filter by resource API version'),
         group: z.string().optional().describe('Filter by API group'),
         appNamespace: z.string().optional().describe('Filter by Argo CD application namespace'),
-        project: z.string().optional().describe('Filter by Argo CD project')
+        project: z.string().optional().describe('Filter by Argo CD project'),
+        compact: z
+          .boolean()
+          .optional()
+          .default(true)
+          .describe(
+            'When true (default), strips liveState, targetState, normalizedLiveState, predictedLiveState, and diff fields to reduce token usage. Set to false for full resource diffs.'
+          )
       },
-      async ({ applicationName, kind, namespace, name, version, group, appNamespace, project }) => {
+      async ({
+        applicationName,
+        kind,
+        namespace,
+        name,
+        version,
+        group,
+        appNamespace,
+        project,
+        compact
+      }) => {
         const filters = {
           ...(kind && { kind }),
           ...(namespace && { namespace }),
@@ -144,7 +165,8 @@ export class Server extends McpServer {
         };
         return await this.argocdClient.getApplicationManagedResources(
           applicationName,
-          Object.keys(filters).length > 0 ? filters : undefined
+          Object.keys(filters).length > 0 ? filters : undefined,
+          compact
         );
       }
     );
@@ -395,6 +417,34 @@ export class Server extends McpServer {
           )
       );
     }
+
+    // Register workflow prompts
+    this.prompt(
+      'debug-application',
+      'Step-by-step workflow for debugging a failing ArgoCD application',
+      { applicationName: z.string().describe('The application name to debug') },
+      ({ applicationName }) => ({
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: [
+                `Debug the ArgoCD application "${applicationName}" by following these steps:`,
+                '',
+                '1. **Get application status:** Call `get_application` to check sync and health status.',
+                '2. **Check events:** Call `get_application_events` with `sinceMinutes=30` to see recent events.',
+                '3. **Inspect resource tree:** Call `get_application_resource_tree` with `health="Degraded"` to find unhealthy resources.',
+                '4. **Get resource details:** For any degraded resources found, call `get_resources` with the specific resource refs.',
+                '5. **Check logs:** For failing pods/deployments, call `get_application_workload_logs` with `sinceSeconds=1800`.',
+                '',
+                'Summarize findings and suggest remediation steps.'
+              ].join('\n')
+            }
+          }
+        ]
+      })
+    );
   }
 
   private addJsonOutputTool<Args extends ZodRawShape, T>(
@@ -404,13 +454,19 @@ export class Server extends McpServer {
     cb: (...cbArgs: Parameters<ToolCallback<Args>>) => T
   ) {
     this.tool(name, description, paramsSchema as ZodRawShape, async (...args) => {
+      logger.info({ tool: name }, 'tool invoked');
       try {
         const result = await cb.apply(this, args as Parameters<ToolCallback<Args>>);
+        logger.info({ tool: name }, 'tool completed successfully');
         return {
           isError: false,
           content: [{ type: 'text', text: JSON.stringify(result) }]
         };
       } catch (error) {
+        logger.error(
+          { tool: name, error: error instanceof Error ? error.message : String(error) },
+          'tool failed'
+        );
         return {
           isError: true,
           content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }]

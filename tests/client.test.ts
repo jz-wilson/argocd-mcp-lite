@@ -251,9 +251,7 @@ describe('ArgoCDClient', () => {
       expect(result.metadata.annotations).not.toHaveProperty(
         'kubectl.kubernetes.io/last-applied-configuration'
       );
-      expect(result.metadata.annotations).not.toHaveProperty(
-        'notified.notifications.argoproj.io'
-      );
+      expect(result.metadata.annotations).not.toHaveProperty('notified.notifications.argoproj.io');
 
       // Should strip managedFields
       expect((result.metadata as any).managedFields).toBeUndefined();

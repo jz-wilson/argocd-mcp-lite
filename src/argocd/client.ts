@@ -254,7 +254,7 @@ export class ArgoCDClient {
           name: n.name,
           namespace: n.namespace,
           health: n.health,
-          status: n.status,
+          status: (n as Record<string, unknown>).status,
           parentRefs: n.parentRefs
         }))
       };

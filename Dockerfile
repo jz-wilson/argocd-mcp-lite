@@ -12,8 +12,11 @@ FROM base AS build
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 RUN pnpm run build
 
-FROM base
+FROM node:20-slim
 COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY --from=build /app/dist /app/dist
+COPY --from=build /app/package.json /app/package.json
+WORKDIR /app
+USER node
 EXPOSE 3000
 CMD [ "node", "dist/index.js", "http" ]

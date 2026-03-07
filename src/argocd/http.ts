@@ -36,6 +36,10 @@ export class HttpClient {
       headers: { ...init?.headers, ...this.headers }
     });
     const body = await response.json();
+    if (!response.ok) {
+      const message = (body as Record<string, unknown>)?.message || response.statusText;
+      throw new Error(`HTTP ${response.status}: ${message}`);
+    }
     return {
       status: response.status,
       headers: response.headers,
@@ -59,6 +63,9 @@ export class HttpClient {
       ...init,
       headers: { ...init?.headers, ...this.headers }
     });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
     const reader = response.body?.getReader();
     if (!reader) {
       throw new Error('response body is not readable');
@@ -76,8 +83,12 @@ export class HttpClient {
 
       for (const line of lines) {
         if (line.trim()) {
-          const json = JSON.parse(line);
-          cb?.(json['result']);
+          try {
+            const json = JSON.parse(line);
+            cb?.(json['result']);
+          } catch {
+            // Skip malformed JSON lines in stream
+          }
         }
       }
     }

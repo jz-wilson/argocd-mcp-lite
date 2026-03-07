@@ -8,10 +8,16 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
 export const connectStdioTransport = () => {
-  const server = createServer({
-    argocdBaseUrl: process.env.ARGOCD_BASE_URL || '',
-    argocdApiToken: process.env.ARGOCD_API_TOKEN || ''
-  });
+  const argocdBaseUrl = process.env.ARGOCD_BASE_URL || '';
+  const argocdApiToken = process.env.ARGOCD_API_TOKEN || '';
+
+  if (!argocdBaseUrl || !argocdApiToken) {
+    throw new Error(
+      'ARGOCD_BASE_URL and ARGOCD_API_TOKEN environment variables must be set for stdio transport.'
+    );
+  }
+
+  const server = createServer({ argocdBaseUrl, argocdApiToken });
 
   logger.info('Connecting to stdio transport');
   server.connect(new StdioServerTransport());

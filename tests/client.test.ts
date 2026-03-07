@@ -430,6 +430,237 @@ describe('ArgoCDClient', () => {
     });
   });
 
+  describe('updateApplication', () => {
+    it('puts to correct endpoint with application body', async () => {
+      const { client, httpClient } = createClient();
+      httpClient.put.mockResolvedValue({ body: fullApplication });
+
+      const app = { metadata: { name: 'my-app' } } as any;
+      await client.updateApplication('my-app', app);
+
+      expect(httpClient.put).toHaveBeenCalledWith('/api/v1/applications/my-app', null, app);
+    });
+  });
+
+  describe('getApplicationManagedResources', () => {
+    it('fetches managed resources for an application', async () => {
+      const { client, httpClient } = createClient();
+      const items = [{ group: 'apps', kind: 'Deployment', name: 'web' }];
+      httpClient.get.mockResolvedValue({ body: { items } });
+
+      const result = await client.getApplicationManagedResources('my-app');
+
+      expect(httpClient.get).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/managed-resources',
+        undefined
+      );
+      expect(result.items).toEqual(items);
+    });
+
+    it('passes filter params to API', async () => {
+      const { client, httpClient } = createClient();
+      httpClient.get.mockResolvedValue({ body: { items: [] } });
+
+      const filters = { namespace: 'prod', kind: 'Deployment', group: 'apps' };
+      await client.getApplicationManagedResources('my-app', filters);
+
+      expect(httpClient.get).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/managed-resources',
+        filters
+      );
+    });
+  });
+
+  describe('getApplicationLogs', () => {
+    it('streams logs and collects entries', async () => {
+      const { client, httpClient } = createClient();
+      mockGetStream.mockImplementation(
+        async (_url: string, _params: unknown, cb: (chunk: unknown) => void) => {
+          cb({ content: 'line1', timeStamp: '2024-01-01T00:00:00Z' });
+          cb({ content: 'line2', timeStamp: '2024-01-01T00:00:01Z' });
+        }
+      );
+
+      const result = await client.getApplicationLogs('my-app');
+
+      expect(result).toHaveLength(2);
+      expect(result[0].content).toBe('line1');
+      expect(mockGetStream).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/logs',
+        { follow: false, tailLines: 100 },
+        expect.any(Function)
+      );
+    });
+  });
+
+  describe('getWorkloadLogs', () => {
+    it('streams workload logs with resource ref params', async () => {
+      const { client } = createClient();
+      mockGetStream.mockImplementation(
+        async (_url: string, _params: unknown, cb: (chunk: unknown) => void) => {
+          cb({ content: 'workload-log' });
+        }
+      );
+
+      const resourceRef = {
+        namespace: 'prod',
+        name: 'web',
+        group: 'apps',
+        kind: 'Deployment',
+        version: 'v1'
+      };
+      const result = await client.getWorkloadLogs('my-app', 'argocd', resourceRef as any, 'main');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toBe('workload-log');
+      expect(mockGetStream).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/logs',
+        expect.objectContaining({
+          appNamespace: 'argocd',
+          namespace: 'prod',
+          resourceName: 'web',
+          container: 'main',
+          follow: false,
+          tailLines: 50
+        }),
+        expect.any(Function)
+      );
+    });
+
+    it('passes sinceSeconds option', async () => {
+      const { client } = createClient();
+      mockGetStream.mockResolvedValue(undefined);
+
+      const resourceRef = {
+        namespace: 'prod',
+        name: 'web',
+        group: 'apps',
+        kind: 'Deployment',
+        version: 'v1'
+      };
+      await client.getWorkloadLogs('my-app', 'argocd', resourceRef as any, 'main', {
+        sinceSeconds: 300
+      });
+
+      expect(mockGetStream).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/logs',
+        expect.objectContaining({ sinceSeconds: 300 }),
+        expect.any(Function)
+      );
+    });
+  });
+
+  describe('getResource', () => {
+    it('fetches a resource manifest', async () => {
+      const { client, httpClient } = createClient();
+      httpClient.get.mockResolvedValue({
+        body: { manifest: '{"kind":"Deployment","metadata":{"name":"web"}}' }
+      });
+
+      const resourceRef = {
+        namespace: 'prod',
+        name: 'web',
+        group: 'apps',
+        kind: 'Deployment',
+        version: 'v1'
+      };
+      const result = await client.getResource('my-app', 'argocd', resourceRef as any);
+
+      expect(result).toBe('{"kind":"Deployment","metadata":{"name":"web"}}');
+      expect(httpClient.get).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/resource',
+        expect.objectContaining({
+          appNamespace: 'argocd',
+          namespace: 'prod',
+          resourceName: 'web',
+          group: 'apps',
+          kind: 'Deployment',
+          version: 'v1'
+        })
+      );
+    });
+  });
+
+  describe('getResourceEvents', () => {
+    it('fetches and filters resource events', async () => {
+      const { client, httpClient } = createClient();
+      httpClient.get.mockResolvedValue({ body: { items: [...eventItems] } });
+
+      const result = await client.getResourceEvents(
+        'my-app',
+        'argocd',
+        'uid-123',
+        'prod',
+        'web',
+        { limit: 3 }
+      );
+
+      expect(result.items).toHaveLength(3);
+      expect(httpClient.get).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/events',
+        expect.objectContaining({
+          appNamespace: 'argocd',
+          resourceUID: 'uid-123',
+          resourceNamespace: 'prod',
+          resourceName: 'web'
+        })
+      );
+    });
+  });
+
+  describe('getResourceActions', () => {
+    it('fetches available actions for a resource', async () => {
+      const { client, httpClient } = createClient();
+      const actions = [{ name: 'restart', disabled: false }];
+      httpClient.get.mockResolvedValue({ body: { actions } });
+
+      const resourceRef = {
+        namespace: 'prod',
+        name: 'web',
+        group: 'apps',
+        kind: 'Deployment',
+        version: 'v1'
+      };
+      const result = await client.getResourceActions('my-app', 'argocd', resourceRef as any);
+
+      expect(result.actions).toEqual(actions);
+      expect(httpClient.get).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/resource/actions',
+        expect.objectContaining({
+          appNamespace: 'argocd',
+          resourceName: 'web',
+          kind: 'Deployment'
+        })
+      );
+    });
+  });
+
+  describe('runResourceAction', () => {
+    it('posts action to correct endpoint', async () => {
+      const { client, httpClient } = createClient();
+      httpClient.post.mockResolvedValue({ body: fullApplication });
+
+      const resourceRef = {
+        namespace: 'prod',
+        name: 'web',
+        group: 'apps',
+        kind: 'Deployment',
+        version: 'v1'
+      };
+      await client.runResourceAction('my-app', 'argocd', resourceRef as any, 'restart');
+
+      expect(httpClient.post).toHaveBeenCalledWith(
+        '/api/v1/applications/my-app/resource/actions',
+        expect.objectContaining({
+          appNamespace: 'argocd',
+          resourceName: 'web',
+          kind: 'Deployment'
+        }),
+        'restart'
+      );
+    });
+  });
+
   describe('CRUD operations', () => {
     it('createApplication posts to correct endpoint', async () => {
       const { client, httpClient } = createClient();

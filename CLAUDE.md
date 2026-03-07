@@ -56,3 +56,11 @@ Tests live in `tests/` and use vitest with globals enabled (no need to import `d
 ## CI
 
 GitHub Actions runs lint → build → test → audit across Node.js 18/20/22. Pre-PR checklist: `pnpm lint && pnpm build && pnpm test`.
+
+## Skill Maintenance
+
+The ArgoCD skill at `.claude/skills/argocd/SKILL.md` teaches Claude how to use this MCP server effectively. **When making changes to the server, review and update the skill to stay in sync.** Specifically:
+
+- **Tool changes** (`src/server/server.ts`): Update the tool quick reference table and workflow steps in the skill if tools are added, removed, renamed, or have parameter changes.
+- **Schema changes** (`src/shared/models/schema.ts`): Update the ResourceRef shape and Application object shape sections in the skill.
+- **Default changes**: If compact mode defaults, pagination defaults, or log tail defaults change, update the token efficiency rules section.
